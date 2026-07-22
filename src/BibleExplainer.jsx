@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 // getBible v2 vertalingen (volledige lijst: https://api.getbible.net/v2/translations.json)
 const TRANSLATIONS = [
@@ -122,9 +123,9 @@ export default function BibleExplainer() {
       {explanation && (
         <section style={styles.explanation}>
           <h3 style={styles.explanationHeading}>Uitleg</h3>
-          {explanation.split("\n").map((line, i) =>
-            line.trim() ? <p key={i}>{line}</p> : null
-          )}
+          <div style={styles.markdown}>
+            <ReactMarkdown>{explanation}</ReactMarkdown>
+          </div>
         </section>
       )}
     </div>
@@ -145,5 +146,6 @@ const styles = {
   verseNum: { color: "#999", fontWeight: 600, marginRight: 2 },
   explanation: { marginTop: "1.5rem", padding: "1.25rem", background: "#f4f1ee", borderRadius: 12, lineHeight: 1.6 },
   explanationHeading: { marginTop: 0 },
+  markdown: { lineHeight: 1.6 },
   error: { color: "#b00020", marginTop: "1rem" },
 };
