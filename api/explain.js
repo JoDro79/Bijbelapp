@@ -13,16 +13,33 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Verzoek niet toegestaan van deze oorsprong." });
   }
 
-  const { reference, passage } = req.body || {};
+  const { reference, passage, messages } = req.body || {};
   if (!passage) return res.status(400).json({ error: "Geen tekst om uit te leggen." });
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: "Geen gespreksberichten meegestuurd." });
+  }
 
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: "Server niet correct geconfigureerd." });
   }
 
-  // Standaardmodel; overschrijf met env-var GEMINI_MODEL indien nodig.
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+  // De system-instructie draagt de rol + de concrete Bijbeltekst, zodat elke
+  // vervolgvraag gegrond blijft in dezelfde passage.
+  const systemText =
+    "Je bent een behulpzame gids die Bijbelteksten helder en respectvol uitlegt in het Nederlands. " +
+    "Geef context, betekenis en bekende interpretaties, zonder één stroming als de enige juiste te presenteren. " +
+    "Beantwoord vervolgvragen in het licht van de onderstaande tekst.\n\n" +
+    `De tekst die centraal staat (${reference}):\n\n${passage}`;
+
+  // Zet de app-berichten om naar Gemini's contents-formaat.
+  // Verwacht: messages = [{ role: 'user' | 'model', text: '...' }, ...]
+  const contents = messages.map((m) => ({
+    role: m.role === "model" ? "model" : "user",
+    parts: [{ text: String(m.text || "") }],
+  }));
 
   try {
     const apiRes = await fetch(
@@ -34,23 +51,8 @@ export default async function handler(req, res) {
           "x-goog-api-key": GEMINI_API_KEY,
         },
         body: JSON.stringify({
-          system_instruction: {
-            parts: [
-              {
-                text:
-                  "Je bent een behulpzame gids die Bijbelteksten helder en respectvol uitlegt in het Nederlands. " +
-                  "Geef context, betekenis en bekende interpretaties, zonder één stroming als de enige juiste te presenteren.",
-              },
-            ],
-          },
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: `Leg de volgende Bijbeltekst uit (${reference}):\n\n${passage}` },
-              ],
-            },
-          ],
+          system_instruction: { parts: [{ text: systemText }] },
+          contents,
         }),
       }
     );
@@ -61,19 +63,19 @@ export default async function handler(req, res) {
     }
 
     const data = await apiRes.json();
-    const explanation =
+    const reply =
       data.candidates?.[0]?.content?.parts
         ?.map((p) => p.text)
         .filter(Boolean)
         .join("\n") || "";
 
-    if (!explanation) {
+    if (!reply) {
       return res.status(502).json({ error: "Gemini gaf geen bruikbaar antwoord." });
     }
 
-    res.json({ explanation });
+    res.json({ reply });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Kon geen uitleg ophalen." });
+    res.status(500).json({ error: "Kon geen antwoord ophalen." });
   }
 }
