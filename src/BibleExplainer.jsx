@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import "./styles.css";
 
 // getBible v2 vertalingen (volledige lijst: https://api.getbible.net/v2/translations.json)
 const TRANSLATIONS = [
@@ -8,9 +9,20 @@ const TRANSLATIONS = [
   { code: "asv", label: "American Standard Version (EN)" },
 ];
 
-// De automatische eerste vraag zodra je op "Vragen" klikt.
 const SEED_PROMPT =
   "Leg deze Bijbeltekst uit: geef context, betekenis en bekende interpretaties.";
+
+// Boek-met-kruis logo, in lijn met de mockup.
+function BrandMark() {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path d="M6 12c5-2.5 11-2.5 18 0v26c-7-2.5-13-2.5-18 0V12Z" fill="currentColor" opacity="0.9" />
+      <path d="M42 12c-5-2.5-11-2.5-18 0v26c7-2.5 13-2.5 18 0V12Z" fill="currentColor" opacity="0.7" />
+      <path d="M24 10v30" stroke="#fff" strokeWidth="1.4" opacity="0.5" />
+      <path d="M22 4h4v10h-4zM18 7h12v3H18z" fill="currentColor" />
+    </svg>
+  );
+}
 
 export default function BibleExplainer() {
   const [reference, setReference] = useState("");
@@ -19,7 +31,6 @@ export default function BibleExplainer() {
   const [loadingText, setLoadingText] = useState(false);
   const [textError, setTextError] = useState(null);
 
-  // Gesprek: rij van { role: 'user' | 'model', text }
   const [conversation, setConversation] = useState([]);
   const [input, setInput] = useState("");
   const [loadingChat, setLoadingChat] = useState(false);
@@ -59,7 +70,6 @@ export default function BibleExplainer() {
     }
   }
 
-  // Eén beurt: stuur de volledige geschiedenis mee, voeg het antwoord toe.
   async function runTurn(historyToSend) {
     setLoadingChat(true);
     setChatError(null);
@@ -80,7 +90,6 @@ export default function BibleExplainer() {
       const data = await res.json();
       setConversation([...historyToSend, { role: "model", text: data.reply }]);
     } catch (err) {
-      // Bij een fout de laatste (mislukte) vraag laten staan zodat de context klopt.
       setConversation(historyToSend);
       setChatError(err.message);
     } finally {
@@ -110,12 +119,11 @@ export default function BibleExplainer() {
     const lines = [];
     if (verses) lines.push(verses.reference);
     conversation.forEach((m, i) => {
-      if (i === 0 && m.role === "user") return; // automatische openingsvraag overslaan
+      if (i === 0 && m.role === "user") return;
       lines.push(m.role === "user" ? `Vraag: ${m.text}` : `Uitleg: ${m.text}`);
     });
-    const text = lines.join("\n\n");
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(lines.join("\n\n"));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -124,126 +132,137 @@ export default function BibleExplainer() {
   }
 
   const chatStarted = conversation.length > 0;
+  const hasModelReply = conversation.some((m) => m.role === "model");
 
   return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>Bijbeltekst opzoeken</h1>
-      <form onSubmit={fetchPassage} style={styles.form}>
-        <input
-          type="text"
-          value={reference}
-          onChange={(e) => setReference(e.target.value)}
-          placeholder="bijv. Johannes 3:16 of Psalm 23:1-6"
-          style={styles.input}
-          aria-label="Bijbelverwijzing"
-        />
-        <select
-          value={translation}
-          onChange={(e) => setTranslation(e.target.value)}
-          style={styles.select}
-          aria-label="Vertaling"
-        >
-          {TRANSLATIONS.map((t) => (
-            <option key={t.code} value={t.code}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        <button type="submit" style={styles.button} disabled={loadingText}>
-          {loadingText ? "Bezig…" : "Ophalen"}
-        </button>
-      </form>
-
-      {textError && <p style={styles.error}>⚠️ {textError}</p>}
-
-      {verses && (
-        <section style={styles.passage}>
-          <h2 style={styles.passageHeading}>{verses.reference}</h2>
-          {verses.verses.map((v) => (
-            <p key={v.name} style={styles.verse}>
-              <sup style={styles.verseNum}>{v.verse}</sup> {v.text.trim()}
-            </p>
-          ))}
-          {!chatStarted && (
-            <button onClick={startChat} style={styles.askButton} disabled={loadingChat}>
-              {loadingChat ? "Nadenken…" : "Vragen"}
-            </button>
-          )}
-        </section>
-      )}
-
-      {chatStarted && (
-        <section style={styles.chat}>
-          {conversation.some((m) => m.role === "model") && (
-            <div style={styles.chatToolbar}>
-              <button onClick={copyChat} style={styles.copyButton}>
-                {copied ? "Gekopieerd!" : "Kopieer gesprek"}
-              </button>
+    <>
+      <header className="bs-header">
+        <div className="bs-header-inner">
+          <div className="bs-brand">
+            <BrandMark />
+            <div className="bs-wordmark">
+              Bijbelstudie<span>Gids</span>
             </div>
-          )}
-          {conversation.map((m, i) =>
-            m.role === "user" ? (
-              // De automatische eerste vraag verbergen we; echte vragen tonen we.
-              i === 0 ? null : (
-                <div key={i} style={styles.userBubble}>
-                  {m.text}
-                </div>
-              )
-            ) : (
-              <div key={i} style={styles.modelBubble}>
-                <ReactMarkdown>{m.text}</ReactMarkdown>
-              </div>
-            )
-          )}
+          </div>
+          <div className="bs-tagline">Verstaan · Volgen · Verkondigen</div>
+        </div>
+      </header>
 
-          {loadingChat && <p style={styles.thinking}>Nadenken…</p>}
-          {chatError && <p style={styles.error}>⚠️ {chatError}</p>}
+      <section className="bs-hero">
+        <p className="bs-eyebrow">Bijbelstudie Gids</p>
+        <h1 className="bs-hero-title">God leren kennen</h1>
+        <hr className="bs-hero-rule" />
+        <p className="bs-hero-sub">Verstaan | Volgen | Verkondigen</p>
+      </section>
 
-          <div style={styles.inputRow}>
+      <main className="bs-main">
+        <p className="bs-intro">
+          Zoek een Bijbelgedeelte op, lees de tekst en verdiep je met vervolgvragen.
+        </p>
+
+        <form onSubmit={fetchPassage} className="bs-lookup">
+          <div className="bs-field">
             <input
               type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onInputKeyDown}
-              placeholder="Stel een vervolgvraag…"
-              style={styles.chatInput}
-              disabled={loadingChat}
-              aria-label="Vervolgvraag"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="bijv. Johannes 3:16 of Psalm 23:1-6"
+              className="bs-input"
+              aria-label="Bijbelverwijzing"
             />
-            <button
-              onClick={sendFollowup}
-              style={styles.sendButton}
-              disabled={loadingChat || !input.trim()}
-            >
-              Verstuur
-            </button>
           </div>
-        </section>
-      )}
-    </div>
+          <select
+            value={translation}
+            onChange={(e) => setTranslation(e.target.value)}
+            className="bs-select"
+            aria-label="Vertaling"
+            style={{ flex: "0 0 auto", width: "auto" }}
+          >
+            {TRANSLATIONS.map((t) => (
+              <option key={t.code} value={t.code}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="bs-btn bs-btn-primary" disabled={loadingText}>
+            {loadingText ? "Bezig…" : "Ophalen"}
+          </button>
+        </form>
+
+        {textError && <p className="bs-error">⚠️ {textError}</p>}
+
+        {verses && (
+          <section className="bs-passage">
+            <h2 className="bs-passage-ref">{verses.reference}</h2>
+            {verses.verses.map((v) => (
+              <p key={v.name} className="bs-verse">
+                <sup className="bs-verse-num">{v.verse}</sup>
+                {v.text.trim()}
+              </p>
+            ))}
+            {!chatStarted && (
+              <div className="bs-ask-row">
+                <button
+                  onClick={startChat}
+                  className="bs-btn bs-btn-primary"
+                  disabled={loadingChat}
+                >
+                  {loadingChat ? "Nadenken…" : "Vragen"}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {chatStarted && (
+          <section className="bs-chat">
+            {hasModelReply && (
+              <div className="bs-chat-toolbar">
+                <button onClick={copyChat} className="bs-btn bs-btn-ghost">
+                  {copied ? "Gekopieerd!" : "Kopieer gesprek"}
+                </button>
+              </div>
+            )}
+
+            {conversation.map((m, i) =>
+              m.role === "user" ? (
+                i === 0 ? null : (
+                  <div key={i} className="bs-bubble-user">
+                    {m.text}
+                  </div>
+                )
+              ) : (
+                <div key={i} className="bs-bubble-model">
+                  <ReactMarkdown>{m.text}</ReactMarkdown>
+                </div>
+              )
+            )}
+
+            {loadingChat && <p className="bs-thinking">Nadenken…</p>}
+            {chatError && <p className="bs-error">⚠️ {chatError}</p>}
+
+            <div className="bs-input-row">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onInputKeyDown}
+                placeholder="Stel een vervolgvraag…"
+                className="bs-chat-input"
+                disabled={loadingChat}
+                aria-label="Vervolgvraag"
+              />
+              <button
+                onClick={sendFollowup}
+                className="bs-btn bs-btn-primary"
+                disabled={loadingChat || !input.trim()}
+              >
+                Verstuur
+              </button>
+            </div>
+          </section>
+        )}
+      </main>
+    </>
   );
 }
-
-const styles = {
-  container: { maxWidth: 680, margin: "0 auto", padding: "2rem 1rem", fontFamily: "system-ui, sans-serif", color: "#1a1a1a" },
-  title: { fontSize: "1.6rem", marginBottom: "1rem" },
-  form: { display: "flex", gap: "0.5rem", flexWrap: "wrap" },
-  input: { flex: "1 1 200px", padding: "0.6rem 0.75rem", fontSize: "1rem", border: "1px solid #ccc", borderRadius: 8 },
-  select: { padding: "0.6rem 0.5rem", fontSize: "1rem", border: "1px solid #ccc", borderRadius: 8 },
-  button: { padding: "0.6rem 1.1rem", fontSize: "1rem", border: "none", borderRadius: 8, background: "#2d2d2d", color: "#fff", cursor: "pointer" },
-  askButton: { marginTop: "1rem", padding: "0.55rem 1rem", fontSize: "0.95rem", border: "none", borderRadius: 8, background: "#c96442", color: "#fff", cursor: "pointer" },
-  passage: { marginTop: "1.5rem", padding: "1.25rem", background: "#faf9f7", border: "1px solid #eee", borderRadius: 12 },
-  passageHeading: { marginTop: 0, fontSize: "1.15rem" },
-  verse: { lineHeight: 1.6, margin: "0.4rem 0" },
-  verseNum: { color: "#999", fontWeight: 600, marginRight: 2 },
-  chat: { marginTop: "1.5rem", display: "flex", flexDirection: "column", gap: "0.75rem" },
-  chatToolbar: { display: "flex", justifyContent: "flex-end" },
-  copyButton: { padding: "0.35rem 0.75rem", fontSize: "0.85rem", border: "1px solid #ccc", borderRadius: 8, background: "#fff", color: "#333", cursor: "pointer" },
-  userBubble: { alignSelf: "flex-end", maxWidth: "85%", padding: "0.6rem 0.9rem", background: "#2d2d2d", color: "#fff", borderRadius: 12, borderBottomRightRadius: 3, lineHeight: 1.5 },
-  modelBubble: { alignSelf: "flex-start", maxWidth: "100%", padding: "0.75rem 1rem", background: "#f4f1ee", borderRadius: 12, borderBottomLeftRadius: 3, lineHeight: 1.6 },
-  thinking: { color: "#888", fontStyle: "italic", margin: "0.25rem 0" },
-  inputRow: { display: "flex", gap: "0.5rem", marginTop: "0.5rem" },
-  chatInput: { flex: 1, padding: "0.6rem 0.75rem", fontSize: "1rem", border: "1px solid #ccc", borderRadius: 8 },
-  sendButton: { padding: "0.6rem 1.1rem", fontSize: "1rem", border: "none", borderRadius: 8, background: "#c96442", color: "#fff", cursor: "pointer" },
-  error: { color: "#b00020", marginTop: "0.5rem" },
-};
