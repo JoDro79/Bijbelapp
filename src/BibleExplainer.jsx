@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import "./styles.css";
 
-// getBible v2 vertalingen (volledige lijst: https://api.getbible.net/v2/translations.json)
 const TRANSLATIONS = [
   { code: "statenvertaling", label: "Statenvertaling (NL)" },
   { code: "kjv", label: "King James Version (EN)" },
@@ -12,7 +11,57 @@ const TRANSLATIONS = [
 const SEED_PROMPT =
   "Leg deze Bijbeltekst uit: geef context, betekenis en bekende interpretaties.";
 
-// Boek-met-kruis logo, in lijn met de mockup.
+const STORE_KEY = "bijbelstudie-gesprekken";
+const MAX_SAVED = 50;
+
+// --- Onthoud de gekozen Obsidian-map (een maphandle mag niet in localStorage) ---
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("bijbelstudie", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readonly").objectStore("kv").get(key);
+    t.onsuccess = () => res(t.result);
+    t.onerror = () => rej(t.error);
+  });
+}
+async function idbSet(key, val) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readwrite").objectStore("kv").put(val, key);
+    t.onsuccess = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+const CAN_PICK_FOLDER =
+  typeof window !== "undefined" && "showDirectoryPicker" in window;
+
+
+// --- Opslag in de browser (blijft op dit apparaat) ---
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function persistHistory(list) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(list.slice(0, MAX_SAVED)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function BrandMark() {
   return (
     <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
@@ -37,9 +86,45 @@ export default function BibleExplainer() {
   const [chatError, setChatError] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  const [history, setHistory] = useState([]);
+  const [sessionId, setSessionId] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [vaultName, setVaultName] = useState(null);
+  const [savedToVault, setSavedToVault] = useState(false);
+
+  useEffect(() => {
+    setHistory(loadHistory());
+    if (CAN_PICK_FOLDER) {
+      idbGet("vaultHandle")
+        .then((h) => h && setVaultName(h.name))
+        .catch(() => {});
+    }
+  }, []);
+
   const passageText = verses
     ? verses.verses.map((v) => `${v.name}: ${v.text.trim()}`).join("\n")
     : "";
+
+  // Bewaar automatisch zodra er een antwoord is.
+  useEffect(() => {
+    if (!verses || !conversation.some((m) => m.role === "model")) return;
+    const id = sessionId || String(Date.now());
+    if (!sessionId) setSessionId(id);
+    const entry = {
+      id,
+      reference: verses.reference,
+      translation,
+      verses: verses.verses,
+      conversation,
+      savedAt: new Date().toISOString(),
+    };
+    setHistory((prev) => {
+      const next = [entry, ...prev.filter((h) => h.id !== id)];
+      persistHistory(next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation, verses]);
 
   async function fetchPassage(e) {
     e.preventDefault();
@@ -50,6 +135,7 @@ export default function BibleExplainer() {
     setConversation([]);
     setChatError(null);
     setInput("");
+    setSessionId(null);
     try {
       const res = await fetch(
         `/api/bible?translation=${encodeURIComponent(translation)}&ref=${encodeURIComponent(reference)}`
@@ -115,20 +201,125 @@ export default function BibleExplainer() {
     }
   }
 
-  async function copyChat() {
-    const lines = [];
-    if (verses) lines.push(verses.reference);
+  // Boeknaam uit de verwijzing halen, voor een bruikbare tag in Obsidian.
+  function bookTag(ref) {
+    const naam = String(ref || "")
+      .replace(/[0-9:：\-–,\s]+$/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    return naam || "algemeen";
+  }
+
+  function buildTranscript() {
+    const ref = verses?.reference || "Bijbelstudie";
+    const datum = new Date().toISOString().slice(0, 10);
+    const lines = [
+      "---",
+      `titel: "${ref}"`,
+      `verwijzing: "${ref}"`,
+      `vertaling: ${translation}`,
+      `datum: ${datum}`,
+      `tags: [bijbelstudie, ${bookTag(ref)}]`,
+      "---",
+      "",
+      `# ${ref}`,
+      "",
+    ];
+    if (verses) {
+      verses.verses.forEach((v) => lines.push(`> [!quote] ${v.verse}`, `> ${v.text.trim()}`, ""));
+    }
     conversation.forEach((m, i) => {
       if (i === 0 && m.role === "user") return;
-      lines.push(m.role === "user" ? `Vraag: ${m.text}` : `Uitleg: ${m.text}`);
+      lines.push(m.role === "user" ? `## Vraag: ${m.text}` : m.text, "");
     });
+    return lines.join("\n");
+  }
+
+  function fileName() {
+    const slug = (verses?.reference || "gesprek")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    return `Bijbelstudie ${slug} ${new Date().toISOString().slice(0, 10)}.md`;
+  }
+
+  async function copyChat() {
     try {
-      await navigator.clipboard.writeText(lines.join("\n\n"));
+      await navigator.clipboard.writeText(buildTranscript());
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       setChatError("Kopiëren mislukt — je browser blokkeert klembordtoegang.");
     }
+  }
+
+  function downloadChat() {
+    const blob = new Blob([buildTranscript()], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Rechtstreeks in de gekozen Obsidian-map schrijven (Chrome/Edge).
+  async function saveToVault() {
+    try {
+      let handle = await idbGet("vaultHandle");
+      if (!handle) {
+        handle = await window.showDirectoryPicker({ mode: "readwrite" });
+        await idbSet("vaultHandle", handle);
+      }
+      let perm = await handle.queryPermission({ mode: "readwrite" });
+      if (perm !== "granted") {
+        perm = await handle.requestPermission({ mode: "readwrite" });
+      }
+      if (perm !== "granted") {
+        setChatError("Geen toestemming om in die map te schrijven.");
+        return;
+      }
+      const fh = await handle.getFileHandle(fileName(), { create: true });
+      const writable = await fh.createWritable();
+      await writable.write(buildTranscript());
+      await writable.close();
+      setVaultName(handle.name);
+      setSavedToVault(true);
+      setTimeout(() => setSavedToVault(false), 2500);
+    } catch (err) {
+      if (err && err.name === "AbortError") return; // gebruiker klikte weg
+      setChatError("Opslaan in de map mislukt: " + (err?.message || "onbekende fout"));
+    }
+  }
+
+  async function forgetVault() {
+    await idbSet("vaultHandle", undefined);
+    setVaultName(null);
+  }
+
+  function openSaved(entry) {
+    setVerses({ reference: entry.reference, verses: entry.verses });
+    setTranslation(entry.translation || "statenvertaling");
+    setReference(entry.reference);
+    setConversation(entry.conversation);
+    setSessionId(entry.id);
+    setChatError(null);
+    setShowHistory(false);
+  }
+
+  function deleteSaved(id) {
+    setHistory((prev) => {
+      const next = prev.filter((h) => h.id !== id);
+      persistHistory(next);
+      return next;
+    });
+    if (id === sessionId) setSessionId(null);
   }
 
   const chatStarted = conversation.length > 0;
@@ -144,7 +335,12 @@ export default function BibleExplainer() {
               Bijbelstudie<span>Gids</span>
             </div>
           </div>
-          <div className="bs-tagline">Verstaan · Volgen · Verkondigen</div>
+          <button
+            className="bs-btn bs-btn-ghost"
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            Bewaard ({history.length})
+          </button>
         </div>
       </header>
 
@@ -156,6 +352,41 @@ export default function BibleExplainer() {
       </section>
 
       <main className="bs-main">
+        {showHistory && (
+          <section className="bs-saved">
+            <h2 className="bs-saved-title">Bewaarde gesprekken</h2>
+            {history.length === 0 ? (
+              <p className="bs-intro">
+                Nog niets bewaard. Zodra je een uitleg opvraagt, verschijnt het gesprek hier.
+              </p>
+            ) : (
+              <ul className="bs-saved-list">
+                {history.map((h) => (
+                  <li key={h.id} className="bs-saved-item">
+                    <button className="bs-saved-open" onClick={() => openSaved(h)}>
+                      <span className="bs-saved-ref">{h.reference}</span>
+                      <span className="bs-saved-date">
+                        {new Date(h.savedAt).toLocaleDateString("nl-NL", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </span>
+                    </button>
+                    <button
+                      className="bs-btn bs-btn-ghost"
+                      onClick={() => deleteSaved(h.id)}
+                      aria-label={`Verwijder ${h.reference}`}
+                    >
+                      Wissen
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+
         <p className="bs-intro">
           Zoek een Bijbelgedeelte op, lees de tekst en verdiep je met vervolgvragen.
         </p>
@@ -221,6 +452,18 @@ export default function BibleExplainer() {
                 <button onClick={copyChat} className="bs-btn bs-btn-ghost">
                   {copied ? "Gekopieerd!" : "Kopieer gesprek"}
                 </button>
+                <button onClick={downloadChat} className="bs-btn bs-btn-ghost">
+                  Download als bestand
+                </button>
+                {CAN_PICK_FOLDER && (
+                  <button onClick={saveToVault} className="bs-btn bs-btn-ghost">
+                    {savedToVault
+                      ? "Opgeslagen!"
+                      : vaultName
+                      ? `Opslaan in ${vaultName}`
+                      : "Opslaan in Obsidian-map…"}
+                  </button>
+                )}
               </div>
             )}
 
@@ -261,6 +504,15 @@ export default function BibleExplainer() {
               </button>
             </div>
           </section>
+        )}
+
+        {vaultName && (
+          <p className="bs-vault-note">
+            Notities worden geschreven naar de map <strong>{vaultName}</strong>.{" "}
+            <button className="bs-linkbtn" onClick={forgetVault}>
+              Andere map kiezen
+            </button>
+          </p>
         )}
       </main>
     </>
